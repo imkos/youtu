@@ -7,12 +7,12 @@
 package youtu
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -25,29 +25,29 @@ func (y *Youtu) interfaceRequest(ifname string, req, rsp interface{}) (err error
 	if y.debug {
 		fmt.Printf("req: %#v\n", req)
 	}
-	data, err := json.Marshal(req)
+	b_data, err := json.Marshal(req)
 	if err != nil {
 		return
 	}
-	body, err := y.get(url, string(data))
+	b_body, err := y.get(url, b_data)
 	if err != nil {
 		return
 	}
-	err = json.Unmarshal(body, &rsp)
+	err = json.Unmarshal(b_body, rsp)
 	if err != nil {
 		if y.debug {
-			fmt.Fprintf(os.Stderr, "body:%s\n", string(body))
+			fmt.Fprintf(os.Stderr, "body:%s\n", string(b_body))
 		}
 		return fmt.Errorf("json.Unmarshal() rsp: %s failed: %s\n", rsp, err)
 	}
 	return
 }
 
-func (y *Youtu) get(addr string, req string) (rsp []byte, err error) {
+func (y *Youtu) get(addr string, req []byte) (rsp []byte, err error) {
 	client := &http.Client{
 		Timeout: time.Duration(5 * time.Second),
 	}
-	httpreq, err := http.NewRequest("POST", addr, strings.NewReader(req))
+	httpreq, err := http.NewRequest("POST", addr, bytes.NewReader(req))
 	if err != nil {
 		return
 	}

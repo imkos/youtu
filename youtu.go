@@ -16,16 +16,13 @@ import (
 const (
 	//UserIDMaxLen 用户ID的最大长度
 	UserIDMaxLen = 110
+	//
+	expiredInterval = 1000
 )
-
-const expiredInterval = 1000
 
 var (
 	//ErrUserIDTooLong 用户ID过长错误
 	ErrUserIDTooLong = errors.New("user id too long")
-)
-
-var (
 	//DefaultHost 默认host
 	DefaultHost = "api.youtu.qq.com"
 )
@@ -39,12 +36,12 @@ type AppSign struct {
 }
 
 //NewAppSign 新建应用签名
-func NewAppSign(appID uint32, secretID string, secretKey string, userID string) (as AppSign, err error) {
+func NewAppSign(appID uint32, secretID, secretKey, userID string) (as *AppSign, err error) {
 	if len(userID) > UserIDMaxLen {
 		err = ErrUserIDTooLong
 		return
 	}
-	as = AppSign{
+	as = &AppSign{
 		appID:     appID,
 		secretID:  secretID,
 		secretKey: secretKey,
@@ -55,7 +52,7 @@ func NewAppSign(appID uint32, secretID string, secretKey string, userID string) 
 
 //Youtu 存储签名和host
 type Youtu struct {
-	appSign AppSign
+	appSign *AppSign
 	host    string
 	debug   bool //Default false
 }
@@ -65,7 +62,7 @@ func (y *Youtu) appID() string {
 }
 
 //Init Youtu初始化
-func Init(appSign AppSign, host string) *Youtu {
+func Init(appSign *AppSign, host string) *Youtu {
 	return &Youtu{
 		appSign: appSign,
 		host:    host,
@@ -95,6 +92,11 @@ func (y *Youtu) SetDebug(isDebug bool) {
 	y.debug = isDebug
 }
 
+type RespBase struct {
+	ErrorCode int32  `json:"errorcode"` //返回状态值
+	ErrorMsg  string `json:"errormsg"`  //返回错误消息
+}
+
 type detectFaceReq struct {
 	AppID string     `json:"app_id"`         //App的 API ID
 	Image string     `json:"image"`          //base64编码的二进制图片数据
@@ -103,43 +105,48 @@ type detectFaceReq struct {
 
 //Face 脸参数
 type Face struct {
-	FaceID     string  `json:"face_id"`    //人脸标识
-	X          int32   `json:"x"`          //人脸框左上角x
-	Y          int32   `json:"y"`          //人脸框左上角y
-	Width      float32 `json:"width"`      //人脸框宽度
-	Height     float32 `json:"height"`     //人脸框高度
-	Gender     int32   `json:"gender"`     //性别 [0/(female)~100(male)]
-	Age        int32   `json:"age"`        //年龄 [0~100]
-	Expression int32   `json:"expression"` //object 	微笑[0(normal)~50(smile)~100(laugh)]
-	Glass      bool    `json:"glass"`      //是否有眼镜 [true,false]
-	Pitch      int32   `json:"pitch"`      //上下偏移[-30,30]
-	Yaw        int32   `json:"yaw"`        //左右偏移[-30,30]
-	Roll       int32   `json:"roll"`       //平面旋转[-180,180]
+	FaceID     string    `json:"face_id"`    //人脸标识
+	X          int32     `json:"x"`          //人脸框左上角x
+	Y          int32     `json:"y"`          //人脸框左上角y
+	Width      float32   `json:"width"`      //人脸框宽度
+	Height     float32   `json:"height"`     //人脸框高度
+	Gender     int32     `json:"gender"`     //性别 [0/(female)~100(male)]
+	Age        int32     `json:"age"`        //年龄 [0~100]
+	Expression int32     `json:"expression"` //object 	微笑[0(normal)~50(smile)~100(laugh)]
+	Beauty     int32     `json:"beauty"`     //object 	魅力[0~100]
+	Glass      bool      `json:"glass"`      //是否有眼镜 [true,false]
+	Glasses    uint8     `json:"glasses"`    //是否有眼镜 [0不戴眼镜 1戴眼镜 2戴墨镜] 注：替代原glass（Bool）字段
+	Hat        uint8     `json:"hat"`        //是否戴帽子 [0,1]
+	Mask       uint8     `json:"mask"`       //是否面具 [0,1]
+	Pitch      int32     `json:"pitch"`      //上下偏移[-30,30]
+	Yaw        int32     `json:"yaw"`        //左右偏移[-30,30]
+	Roll       int32     `json:"roll"`       //平面旋转[-180,180]
+	FaceShape  FaceShape `json:"face_shape"` //人脸轮廓结构体，包含所有人脸的轮廓点
 }
 
 //DetectFaceRsp 脸检测返回
 type DetectFaceRsp struct {
+	*RespBase
 	SessionID   string `json:"session_id"`   //相应请求的session标识符，可用于结果查询
 	ImageID     string `json:"image_id"`     //系统中的图片标识符，用于标识用户请求中的图片
 	ImageWidth  int32  `json:"image_width"`  //请求图片的宽度
 	ImageHeight int32  `json:"image_height"` //请求图片的高度
 	Face        []Face `json:"face"`         //被检测出的人脸Face的列表
-	ErrorCode   int    `json:"errorcode"`    //返回状态值
-	ErrorMsg    string `json:"errormsg"`     //返回错误消息
 }
 
 //DetectFace 检测给定图片(Image)中的所有人脸(Face)的位置和相应的面部属性。
 //位置包括(x, y, w, h)，面部属性包括性别(gender), 年龄(age),
 //表情(expression), 眼镜(glass)和姿态(pitch，roll，yaw).
-func (y *Youtu) DetectFace(imageData []byte, isBigFace bool) (rsp DetectFaceRsp, err error) {
+func (y *Youtu) DetectFace(imageData []byte, isBigFace bool) (*DetectFaceRsp, error) {
 	b64Image := base64.StdEncoding.EncodeToString(imageData)
 	req := detectFaceReq{
-		AppID: strconv.Itoa(int(y.appSign.appID)),
+		AppID: strconv.FormatUint(uint64(y.appSign.appID), 10),
 		Image: b64Image,
 		Mode:  mode(isBigFace),
 	}
-	err = y.interfaceRequest("detectface", req, &rsp)
-	return
+	rsp := new(DetectFaceRsp)
+	err := y.interfaceRequest("detectface", &req, rsp)
+	return rsp, err
 }
 
 type faceShapeReq struct {
@@ -166,24 +173,24 @@ type FaceShape struct {
 
 // FaceShapeRsp 返回
 type FaceShapeRsp struct {
+	*RespBase
 	SessionID   string      `json:"session_id"`   //相应请求的session标识符，可用于结果查询
 	FaceShape   []FaceShape `json:"face_shape"`   //人脸轮廓结构体，包含所有人脸的轮廓点
 	ImageWidth  int         `json:"image_width"`  //请求图片的宽度
 	ImageHeight int         `json:"image_height"` //请求图片的高度
-	ErrorCode   int         `json:"errorcode"`    //返回状态值
-	ErrorMsg    string      `json:"errormsg"`     //返回错误消息
 }
 
 //FaceShape 对请求图片进行五官定位，计算构成人脸轮廓的88个点，包括眉毛（左右各8点）、眼睛（左右各8点）、鼻子（13点）、嘴巴（22点）、脸型轮廓（21点）
-func (y *Youtu) FaceShape(image []byte, isBigFace bool) (rsp FaceShapeRsp, err error) {
+func (y *Youtu) FaceShape(image []byte, isBigFace bool) (*FaceShapeRsp, error) {
 	b64Image := base64.StdEncoding.EncodeToString(image)
 	req := faceShapeReq{
 		AppID: strconv.Itoa(int(y.appSign.appID)),
 		Image: b64Image,
 		Mode:  mode(isBigFace),
 	}
-	err = y.interfaceRequest("faceshape", req, &rsp)
-	return
+	rsp := new(FaceShapeRsp)
+	err := y.interfaceRequest("faceshape", &req, rsp)
+	return rsp, err
 }
 
 type faceCompareReq struct {
@@ -194,17 +201,16 @@ type faceCompareReq struct {
 
 //FaceCompareRsp 脸比较返回
 type FaceCompareRsp struct {
+	*RespBase
 	EyebrowSim float32 `json:"eyebrow_sim"` //眉毛的相似度。
 	EyeSim     float32 `json:"eye_sim"`     //眼睛的相似度
 	NoseSim    float32 `json:"nose_sim"`    //鼻子的相似度
 	MouthSim   float32 `json:"mouth_sim"`   //嘴巴的相似度
 	Similarity float32 `json:"similarity"`  //两个face的相似度
-	ErrorCode  int32   `json:"errorcode"`   //返回状态码
-	ErrorMsg   string  `json:"errormsg"`    //返回错误消息
 }
 
 //FaceCompare 计算两个Face的相似性以及五官相似度
-func (y *Youtu) FaceCompare(imageA, imageB []byte) (rsp FaceCompareRsp, err error) {
+func (y *Youtu) FaceCompare(imageA, imageB []byte) (*FaceCompareRsp, error) {
 	b64ImageA := base64.StdEncoding.EncodeToString(imageA)
 	b64ImageB := base64.StdEncoding.EncodeToString(imageB)
 	req := faceCompareReq{
@@ -212,8 +218,9 @@ func (y *Youtu) FaceCompare(imageA, imageB []byte) (rsp FaceCompareRsp, err erro
 		ImageA: b64ImageA,
 		ImageB: b64ImageB,
 	}
-	err = y.interfaceRequest("facecompare", req, &rsp)
-	return
+	rsp := new(FaceCompareRsp)
+	err := y.interfaceRequest("facecompare", &req, rsp)
+	return rsp, err
 }
 
 type faceVerifyReq struct {
@@ -224,23 +231,23 @@ type faceVerifyReq struct {
 
 //FaceVerifyRsp 脸验证返回
 type FaceVerifyRsp struct {
+	*RespBase
 	Ismatch    bool    `json:"ismatch"`    //两个输入是否为同一人的判断
 	Confidence float32 `json:"confidence"` //系统对这个判断的置信度。
 	SessionID  string  `json:"session_id"` //相应请求的session标识符，可用于结果查询
-	ErrorCode  int32   `json:"errorcode"`  //返回状态码
-	ErrorMsg   string  `json:"errormsg"`   //返回错误消息
 }
 
 //FaceVerify 给定一个Face和一个Person，返回是否是同一个人的判断以及置信度。
-func (y *Youtu) FaceVerify(personID string, image []byte) (rsp FaceVerifyRsp, err error) {
+func (y *Youtu) FaceVerify(personID string, image []byte) (*FaceVerifyRsp, error) {
 	b64Image := base64.StdEncoding.EncodeToString(image)
 	req := faceVerifyReq{
 		AppID:    y.appID(),
 		Image:    b64Image,
 		PersonID: personID,
 	}
-	err = y.interfaceRequest("faceverify", req, &rsp)
-	return
+	rsp := new(FaceVerifyRsp)
+	err := y.interfaceRequest("faceverify", &req, rsp)
+	return rsp, err
 }
 
 type faceIdentifyReq struct {
@@ -251,24 +258,24 @@ type faceIdentifyReq struct {
 
 //FaceIdentifyRsp 脸识别返回
 type FaceIdentifyRsp struct {
+	*RespBase
 	SessionID  string  `json:"session_id"` //相应请求的session标识符，可用于结果查询
 	PersonID   string  `json:"person_id"`  //识别结果，person_id
 	FaceID     string  `json:"face_id"`    //识别的face_id
 	Confidence float32 `json:"confidence"` //置信度
-	ErrorCode  int     `json:"errorcode"`  //返回状态码
-	ErrorMsg   string  `json:"errormsg"`   //返回错误消息
 }
 
 //FaceIdentify 对于一个待识别的人脸图片，在一个Group中识别出最相似的Person作为其身份返回
-func (y *Youtu) FaceIdentify(groupID string, image []byte) (rsp FaceIdentifyRsp, err error) {
+func (y *Youtu) FaceIdentify(groupID string, image []byte) (*FaceIdentifyRsp, error) {
 	b64Image := base64.StdEncoding.EncodeToString(image)
 	req := faceIdentifyReq{
 		AppID:   y.appID(),
 		GroupID: groupID,
 		Image:   b64Image,
 	}
-	err = y.interfaceRequest("faceidentify", req, &rsp)
-	return
+	rsp := new(FaceIdentifyRsp)
+	err := y.interfaceRequest("faceidentify", &req, rsp)
+	return rsp, err
 }
 
 type newPersonReq struct {
@@ -282,18 +289,17 @@ type newPersonReq struct {
 
 //NewPersonRsp 个体创建返回
 type NewPersonRsp struct {
+	*RespBase
 	SessionID  string `json:"session_id"`  //相应请求的session标识符
 	SucGroup   int    `json:"suc_group"`   //成功被加入的group数量
 	SucFace    int    `json:"suc_face"`    //成功加入的face数量
 	PersonName string `json:"person_name"` //相应person的name
 	PersonID   string `json:"person_id"`   //相应person的id
 	FaceID     string `json:"face_id"`     //创建所用图片生成的face_id
-	ErrorCode  int    `json:"errorcode"`   //返回码
-	ErrorMsg   string `json:"errormsg"`    //返回错误消息
 }
 
 //NewPerson 创建一个Person，并将Person放置到group_ids指定的组当中
-func (y *Youtu) NewPerson(personID string, personName string, groupIDs []string, image []byte, tag string) (rsp NewPersonRsp, err error) {
+func (y *Youtu) NewPerson(personID string, personName string, groupIDs []string, image []byte, tag string) (*NewPersonRsp, error) {
 	b64Image := base64.StdEncoding.EncodeToString(image)
 	req := newPersonReq{
 		AppID:      y.appID(),
@@ -303,8 +309,9 @@ func (y *Youtu) NewPerson(personID string, personName string, groupIDs []string,
 		PersonName: personName,
 		Tag:        tag,
 	}
-	err = y.interfaceRequest("newperson", req, &rsp)
-	return
+	rsp := new(NewPersonRsp)
+	err := y.interfaceRequest("newperson", &req, rsp)
+	return rsp, err
 }
 
 type delPersonReq struct {
@@ -314,20 +321,20 @@ type delPersonReq struct {
 
 //DelPersonRsp 删除个体返回
 type DelPersonRsp struct {
+	*RespBase
 	SessionID string `json:"session_id"` //相应请求的session标识符
 	Deleted   int    `json:"deleted"`    //成功删除的Person数量
-	ErrorCode int    `json:"errorcode"`  //返回状态码
-	ErrorMsg  string `json:"errormsg"`   //返回错误消息
 }
 
 //DelPerson 删除一个Person
-func (y *Youtu) DelPerson(personID string) (rsp DelPersonRsp, err error) {
+func (y *Youtu) DelPerson(personID string) (*DelPersonRsp, error) {
 	req := delPersonReq{
 		AppID:    y.appID(),
 		PersonID: personID,
 	}
-	err = y.interfaceRequest("delperson", req, &rsp)
-	return
+	rsp := new(DelPersonRsp)
+	err := y.interfaceRequest("delperson", &req, rsp)
+	return rsp, err
 }
 
 type addFaceReq struct {
@@ -339,19 +346,18 @@ type addFaceReq struct {
 
 //AddFaceRsp 增加人脸返回
 type AddFaceRsp struct {
+	*RespBase
 	SessionID string   `json:"session_id"` //相应请求的session标识符
 	Added     int      `json:"added"`      //成功加入的face数量
 	FaceIDs   []string `json:"face_ids"`   //增加的人脸ID列表
-	ErrorCode int      `json:"errorcode"`  //返回状态码
-	ErrorMsg  string   `json:"errormsg"`   //返回错误消息
 }
 
 //AddFace 将一组Face加入到一个Person中。注意，一个Face只能被加入到一个Person中。
 //一个Person最多允许包含10000个Face
-func (y *Youtu) AddFace(personID string, images [][]byte, tag string) (rsp AddFaceRsp, err error) {
+func (y *Youtu) AddFace(personID string, images [][]byte, tag string) (*AddFaceRsp, error) {
 	b64Images := make([]string, len(images))
 	for i, img := range images {
-		b64Images[i] = base64.StdEncoding.EncodeToString([]byte(img))
+		b64Images[i] = base64.StdEncoding.EncodeToString(img)
 	}
 	req := addFaceReq{
 		AppID:    y.appID(),
@@ -359,8 +365,9 @@ func (y *Youtu) AddFace(personID string, images [][]byte, tag string) (rsp AddFa
 		PersonID: personID,
 		Tag:      tag,
 	}
-	err = y.interfaceRequest("addface", req, &rsp)
-	return
+	rsp := new(AddFaceRsp)
+	err := y.interfaceRequest("addface", &req, rsp)
+	return rsp, err
 }
 
 type delFaceReq struct {
@@ -371,21 +378,21 @@ type delFaceReq struct {
 
 //DelFaceRsp 删除人脸返回
 type DelFaceRsp struct {
-	SessonID  string `json:"session_id"` //相应请求的session标识符
-	Deleted   int32  `json:"deleted"`    //成功删除的face数量
-	ErrorCode int32  `json:"errorcode"`  //返回状态码
-	ErrorMsg  string `json:"errormsg"`   //返回错误消息
+	*RespBase
+	SessonID string `json:"session_id"` //相应请求的session标识符
+	Deleted  int32  `json:"deleted"`    //成功删除的face数量
 }
 
 //DelFace 删除一个person下的face，包括特征，属性和face_id.
-func (y *Youtu) DelFace(personID string, faceIDs []string) (rsp DelFaceRsp, err error) {
+func (y *Youtu) DelFace(personID string, faceIDs []string) (*DelFaceRsp, error) {
 	req := delFaceReq{
 		AppID:    y.appID(),
 		PersonID: personID,
 		FaceIDs:  faceIDs,
 	}
-	err = y.interfaceRequest("delface", req, &rsp)
-	return
+	rsp := new(DelFaceRsp)
+	err := y.interfaceRequest("delface", &req, rsp)
+	return rsp, err
 }
 
 type setInfoReq struct {
@@ -397,22 +404,22 @@ type setInfoReq struct {
 
 //SetInfoRsp 设置信息返回
 type SetInfoRsp struct {
+	*RespBase
 	sessionID string `json:"session_id"` //相应请求的session标识符
 	personID  string `json:"person_id"`  //相应person的id
-	errorcode int32  `json:"errorcode"`  //返回状态码
-	errormsg  string `json:"errormsg"`   //返回错误消息
 }
 
 //SetInfo 设置Person的name.
-func (y *Youtu) SetInfo(personID string, personName string, tag string) (rsp SetInfoRsp, err error) {
+func (y *Youtu) SetInfo(personID string, personName string, tag string) (*SetInfoRsp, error) {
 	req := setInfoReq{
 		AppID:      y.appID(),
 		PersonID:   personID,
 		PersonName: personName,
 		Tag:        tag,
 	}
-	err = y.interfaceRequest("setinfo", req, &rsp)
-	return
+	rsp := new(SetInfoRsp)
+	err := y.interfaceRequest("setinfo", &req, rsp)
+	return rsp, err
 }
 
 type getInfoReq struct {
@@ -422,23 +429,23 @@ type getInfoReq struct {
 
 //GetInfoRsp 获取信息返回
 type GetInfoRsp struct {
+	*RespBase
 	PersonName string   `json:"person_name"` //相应person的name
 	PersonID   string   `json:"person_id"`   //相应person的id
 	GroupIDs   []string `json:"group_ids"`   //包含此个体的组列表
 	FaceIDs    []string `json:"face_ids"`    //包含的人脸列表
 	SessionID  string
-	ErrorCode  int    `json:"errorcode"` //返回状态码
-	ErrorMsg   string `json:"errormsg"`  //返回错误消息
 }
 
 //GetInfo 获取一个Person的信息, 包括name, id, tag, 相关的face, 以及groups等信息。
-func (y *Youtu) GetInfo(personID string) (rsp GetInfoRsp, err error) {
+func (y *Youtu) GetInfo(personID string) (*GetInfoRsp, error) {
 	req := getInfoReq{
 		AppID:    y.appID(),
 		PersonID: personID,
 	}
-	err = y.interfaceRequest("getinfo", req, &rsp)
-	return
+	rsp := new(GetInfoRsp)
+	err := y.interfaceRequest("getinfo", &req, rsp)
+	return rsp, err
 }
 
 type getGroupIDsReq struct {
@@ -447,18 +454,18 @@ type getGroupIDsReq struct {
 
 //GetGroupIDsRsp 获取组ID返回
 type GetGroupIDsRsp struct {
-	GroupIDs  []string `json:"group_ids"` //相应app_id的group_id列表
-	ErrorCode int32    `json:"errorcode"` //返回状态码
-	ErrorMsg  string   `json:"errormsg"`  //返回错误消息
+	*RespBase
+	GroupIDs []string `json:"group_ids"` //相应app_id的group_id列表
 }
 
 //GetGroupIDs 获取一个appId下所有group列表
-func (y *Youtu) GetGroupIDs() (rsp GetGroupIDsRsp, err error) {
+func (y *Youtu) GetGroupIDs() (*GetGroupIDsRsp, error) {
 	req := getGroupIDsReq{
 		AppID: y.appID(),
 	}
-	err = y.interfaceRequest("getgroupids", req, &rsp)
-	return
+	rsp := new(GetGroupIDsRsp)
+	err := y.interfaceRequest("getgroupids", &req, rsp)
+	return rsp, err
 }
 
 type getPersonIDsReq struct {
@@ -468,19 +475,19 @@ type getPersonIDsReq struct {
 
 //GetPersonIDsRsp 获取个人ID返回
 type GetPersonIDsRsp struct {
+	*RespBase
 	PersonIDs []string `json:"person_ids"` //相应person的id列表
-	ErrorCode int32    `json:"errorcode"`  //返回状态码
-	ErrorMsg  string   `json:"errormsg"`   //返回错误消息
 }
 
 //GetPersonIDs 获取一个组Group中所有person列表
-func (y *Youtu) GetPersonIDs(groupID string) (rsp GetPersonIDsRsp, err error) {
+func (y *Youtu) GetPersonIDs(groupID string) (*GetPersonIDsRsp, error) {
 	req := getPersonIDsReq{
 		AppID:   y.appID(),
 		GroupID: groupID,
 	}
-	err = y.interfaceRequest("getpersonids", req, &rsp)
-	return
+	rsp := new(GetPersonIDsRsp)
+	err := y.interfaceRequest("getpersonids", &req, rsp)
+	return rsp, err
 }
 
 type getFaceIDsReq struct {
@@ -490,19 +497,19 @@ type getFaceIDsReq struct {
 
 //GetFaceIDsRsp 获取脸ID返回
 type GetFaceIDsRsp struct {
-	FaceIDs   []string `json:"face_ids"`  //相应face的id列表
-	ErrorCode int32    `json:"errorcode"` //返回状态码
-	ErrorMsg  string   `json:"errormsg"`  //返回错误消息
+	*RespBase
+	FaceIDs []string `json:"face_ids"` //相应face的id列表
 }
 
 //GetFaceIDs 获取一个组person中所有face列表
-func (y *Youtu) GetFaceIDs(personID string) (rsp GetFaceIDsRsp, err error) {
+func (y *Youtu) GetFaceIDs(personID string) (*GetFaceIDsRsp, error) {
 	req := getFaceIDsReq{
 		AppID:    y.appID(),
 		PersonID: personID,
 	}
-	err = y.interfaceRequest("getfaceids", req, &rsp)
-	return
+	rsp := new(GetFaceIDsRsp)
+	err := y.interfaceRequest("getfaceids", &req, rsp)
+	return rsp, err
 }
 
 type getFaceInfoReq struct {
@@ -512,17 +519,17 @@ type getFaceInfoReq struct {
 
 //GetFaceInfoRsp 获取脸部信息返回
 type GetFaceInfoRsp struct {
-	FaceInfo  Face   `json:"face_info"` //人脸信息
-	ErrorCode int32  `json:"errorcode"` //返回状态码
-	ErrorMsg  string `json:"errormsg"`  //返回错误消息
+	*RespBase
+	FaceInfo Face `json:"face_info"` //人脸信息
 }
 
 //GetFaceInfo 获取一个face的相关特征信息
-func (y *Youtu) GetFaceInfo(faceID string) (rsp GetFaceInfoRsp, err error) {
+func (y *Youtu) GetFaceInfo(faceID string) (*GetFaceInfoRsp, error) {
 	req := getFaceInfoReq{
 		AppID:  y.appID(),
 		FaceID: faceID,
 	}
-	err = y.interfaceRequest("getfaceinfo", req, &rsp)
-	return
+	rsp := new(GetFaceInfoRsp)
+	err := y.interfaceRequest("getfaceinfo", &req, rsp)
+	return rsp, err
 }
